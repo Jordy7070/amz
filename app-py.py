@@ -4,9 +4,9 @@ from datetime import datetime
 import requests
 from io import BytesIO
 from PIL import Image
-from fpdf import FPDF
 import base64
 from pymongo import MongoClient
+import os
 
 # Configuration de la page
 st.set_page_config(
@@ -35,30 +35,6 @@ def get_barcode_image(url):
         return None
     except:
         return None
-
-def create_pdf(ean_code, barcode_image, product_info):
-    """Crée un PDF avec le code-barres et les informations du produit"""
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font('Arial', 'B', 16)
-    
-    # Informations du produit
-    pdf.cell(0, 10, f"Code EAN: {ean_code}", ln=True)
-    pdf.set_font('Arial', '', 12)
-    pdf.cell(0, 10, f"Produit: {product_info['Produit']}", ln=True)
-    pdf.cell(0, 10, f"Description: {product_info['Description']}", ln=True)
-    pdf.cell(0, 10, f"Quantité: {str(product_info['Quantité'])}", ln=True)
-    pdf.cell(0, 10, f"Localisation: {product_info['Localisation']}", ln=True)
-    
-    # Sauvegarder l'image temporairement
-    temp_image = "temp_barcode.png"
-    barcode_image.save(temp_image)
-    
-    # Ajouter l'image au PDF
-    pdf.image(temp_image, x=10, y=100, w=190)
-    
-    # Retourner le PDF en bytes
-    return pdf.output(dest='S').encode('latin-1')
 
 def main():
     st.title("📦 Gestion d'Inventaire")
@@ -94,14 +70,13 @@ def main():
                             'Date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         }
                         
-                        # Générer et afficher le PDF
-                        pdf_bytes = create_pdf(ean_code, barcode_image, new_entry)
-                        st.download_button(
-                            "📄 Télécharger l'étiquette PDF",
-                            pdf_bytes,
-                            f"etiquette_{ean_code}.pdf",
-                            "application/pdf"
-                        )
+                        # Sauvegarder l'image comme base64
+                        buffered = BytesIO()
+                        barcode_image.save(buffered, format="PNG")
+                        img_str = base64.b64encode(buffered.getvalue()).decode()
+                        
+                        # Ajouter l'image à l'entrée
+                        new_entry['barcode_image'] = img_str
                         
                         # Ajouter à la base de données
                         db.inventory.insert_one(new_entry)
@@ -110,18 +85,22 @@ def main():
     
     with col2:
         st.subheader("Inventaire")
-        inventory = list(db.inventory.find({}, {'_id': 0}))
+        inventory = list(db.inventory.find({}, {'barcode_image': 0}))  # Exclure l'image pour l'affichage
         if inventory:
             df = pd.DataFrame(inventory)
+            # Convertir ObjectId en string si présent
+            if '_id' in df.columns:
+                df['_id'] = df['_id'].astype(str)
             st.dataframe(df, use_container_width=True)
             
             # Export CSV
             csv = df.to_csv(index=False)
             st.download_button(
                 "📥 Télécharger l'inventaire (CSV)",
-                csv,
-                "inventaire.csv",
-                "text/csv"
+                data=csv,
+                file_name="inventaire.csv",
+                mime="text/csv",
+                key="download_csv"
             )
         else:
             st.info("Aucun article dans l'inventaire")
